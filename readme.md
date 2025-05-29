@@ -179,3 +179,190 @@ Bot also Supported with Channels. Just add bot Channel as Admin. If any new file
 - [Me](https://github.com/biisal)
 - [Adarsh](https://github.com/adarsh-goel)
 - Everyone In This Journey !
+
+
+## API for WordPress Integration
+
+This Python application provides an API endpoint to generate direct download/streamable links for files managed by the Telegram bot. This is intended for use by a WordPress plugin or any other service that needs to programmatically obtain these links.
+
+### Endpoint Details
+
+*   **URL:** `/api/v1/generate_link`
+    *   The full URL will be `YOUR_PYTHON_SERVICE_BASE_URL/api/v1/generate_link` (e.g., `https://your-app-name.herokuapp.com/api/v1/generate_link` or `http://your_server_ip:PORT/api/v1/generate_link`).
+*   **HTTP Method:** `POST`
+*   **Content-Type:** `application/json`
+
+### Request Payload
+
+The request must be a JSON object with the following fields:
+
+```json
+{
+    "api_key": "YOUR_SECRET_API_KEY",
+    "chat_id": CHAT_ID_OF_THE_MESSAGE_WITH_FILE,
+    "message_id": MESSAGE_ID_OF_THE_FILE
+}
+```
+
+*   `api_key` (string, required): Your secret API key. This must match the `WP_PLUGIN_API_KEY` configured in the Python service's environment variables.
+*   `chat_id` (integer or string, required): The Telegram Chat ID where the message containing the file is located. For channels, this is usually a negative number (e.g., -1001234567890). For private chats, it's the user ID.
+*   `message_id` (integer, required): The ID of the Telegram message that contains the file.
+
+### Authentication
+
+Authentication is done via the `api_key` sent in the JSON payload.
+If the API key is missing, invalid, or the `WP_PLUGIN_API_KEY` is not configured on the server, an HTTP 401 Unauthorized error will be returned.
+
+### Success Response (200 OK)
+
+If the request is successful, the server will respond with a JSON object containing the download link:
+
+```json
+{
+    "download_link": "GENERATED_DOWNLOAD_STREAM_LINK"
+}
+```
+Example:
+```json
+{
+    "download_link": "https://your-python-service.com/ab123fg67890"
+}
+```
+This link can then be used to directly download or stream the file.
+
+### Error Responses
+
+*   **400 Bad Request:**
+    *   If the JSON payload is malformed or missing required fields.
+    ```json
+    {
+        "error": "Invalid JSON payload"
+    }
+    ```
+    *   If `chat_id` or `message_id` are not valid integers.
+    ```json
+    {
+        "error": "chat_id and message_id must be integers"
+    }
+    ```
+*   **401 Unauthorized:**
+    *   If the `api_key` is invalid or missing.
+    ```json
+    {
+        "error": "Unauthorized"
+    }
+    ```
+*   **404 Not Found:**
+    *   If the specified message is not found in the given chat, or if the message does not contain any media/file.
+    ```json
+    {
+        "error": "File not found or message has no media"
+    }
+    ```
+*   **415 Unsupported Media Type:**
+    *   If the `Content-Type` header is not `application/json`.
+    ```json
+    {
+        "error": "Unsupported Media Type"
+    }
+    ```
+*   **500 Internal Server Error:**
+    *   If there's an unexpected error on the server while trying to fetch file details from Telegram or during other operations.
+    ```json
+    {
+        "error": "Error fetching file details from Telegram" 
+    }
+    ```
+    (The error message might vary slightly)
+*   **503 Service Unavailable:**
+    *   If Telegram services are temporarily unavailable or the bot is under heavy load.
+    ```json
+    {
+        "error": "Service temporarily unavailable, please try again later."
+    }
+    ```
+
+### Example: Calling the API from PHP (WordPress)
+
+Here's a basic example of how you might call this API endpoint using PHP, which can be adapted for a WordPress plugin:
+
+```php
+<?php
+
+function get_telegram_file_download_link($api_url, $api_key, $chat_id, $message_id) {
+    $payload = json_encode([
+        'api_key' => $api_key,
+        'chat_id' => $chat_id,
+        'message_id' => (int)$message_id // Ensure message_id is an integer
+    ]);
+
+    $args = [
+        'body'        => $payload,
+        'headers'     => [
+            'Content-Type' => 'application/json',
+        ],
+        'method'      => 'POST',
+        'data_format' => 'body',
+        'timeout'     => 15, // Optional: set a timeout
+    ];
+
+    // In WordPress, you would use wp_remote_post()
+    // $response = wp_remote_post($api_url, $args);
+
+    // For generic PHP, you might use cURL:
+    $ch = curl_init($api_url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "POST");
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Content-Type: application/json',
+        'Content-Length: ' . strlen($payload)
+    ]);
+
+    $response_body = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    // --- Processing the response (common for both wp_remote_post and cURL) ---
+
+    // Example for wp_remote_post:
+    // if (is_wp_error($response)) {
+    //     return ['error' => 'Request failed: ' . $response->get_error_message()];
+    // }
+    // $http_code = wp_remote_retrieve_response_code($response);
+    // $response_body = wp_remote_retrieve_body($response);
+
+    if ($http_code === 200) {
+        $data = json_decode($response_body, true);
+        return $data; // Should contain ['download_link' => '...']
+    } elseif ($response_body) {
+        $error_data = json_decode($response_body, true);
+        return ['error' => isset($error_data['error']) ? $error_data['error'] : 'Unknown error', 'status_code' => $http_code];
+    } else {
+        return ['error' => 'API request failed with no response body', 'status_code' => $http_code];
+    }
+}
+
+// --- How to use it ---
+// $python_service_api_url = 'YOUR_PYTHON_SERVICE_BASE_URL/api/v1/generate_link';
+// $your_api_key = 'YOUR_SECRET_API_KEY_CONFIGURED_IN_PYTHON_SERVICE';
+// $target_chat_id = -1001234567890; // Example channel ID
+// $target_message_id = 123;       // Example message ID
+
+// $result = get_telegram_file_download_link(
+//     $python_service_api_url,
+//     $your_api_key,
+//     $target_chat_id,
+//     $target_message_id
+// );
+
+// if (isset($result['download_link'])) {
+//     echo "Download Link: " . $result['download_link'];
+// } elseif (isset($result['error'])) {
+//     echo "Error: " . $result['error'] . (isset($result['status_code']) ? " (Status: " . $result['status_code'] . ")" : "");
+// }
+
+?>
+```
+
+Make sure to replace `YOUR_PYTHON_SERVICE_BASE_URL` and `YOUR_SECRET_API_KEY` with your actual service URL and API key. The `chat_id` and `message_id` would typically come from your WordPress plugin's logic or settings.
